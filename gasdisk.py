@@ -4,6 +4,10 @@ import scipy.special as spec
 from astropy.constants import M_sun
 from scipy.constants import G, k, m_p, parsec
 from scipy.integrate import quad, solve_ivp
+from scipy.optimize import root
+
+# select cosmology
+from astropy.cosmology import Planck18 as cosmo
 
 kpc = 1e3*parsec
 
@@ -11,7 +15,7 @@ class GasDisk:
 
     def __init__(self, mass, r_s, z_s, temp=1e4, mu=1, gamma=5/3, disk='double exponential'):
 
-        try:    
+        try:
             if mass > 0 and r_s > 0 and z_s > 0: 
                 self.scale_length = kpc*r_s
                 self.scale_height = kpc*z_s
@@ -41,24 +45,49 @@ class GasDisk:
         self._mesh_z = None        
         self._mesh_rho = None
         self._mesh_v_rot = None
-    
-    # set halo parameters
-    def set_halo(self, mass, r_core, c=10, nfw=True):
 
-        self.halo_mass = mass*M_sun.value
-        self.halo_radius_vir = c*r_core*kpc
+
+    # set halo parameters
+    def set_halo(self, mass, r_core=None, c=10, nfw=True, springel=False):
+
         self.halo_norm_fct = np.log(1 + c) - c/(1 + c)
         
+        if r_core == None:
+            # virial radius is the radius at which the mean enclosed dark matter density
+            # is 200 times the critical density
+            mass_vir = mass*M_sun.value
+            self.halo_radius_vir = (3*mass_vir / (800*np.pi * cosmo.critical_density(0).si.value))**(1/3)
+            
+            # determine halo scale from virial mass
+            if nfw:
+                self.halo_scale = self.halo_radius_vir / c
+                self.halo_mass = mass_vir
+            else:
+                if springel:
+                    # Springel et al., MNRAS 361 (2005), eq. (2)
+                    self.halo_scale = (self.halo_radius_vir / c) * (2*self.halo_norm_fct)**(1/2)
+                    self.halo_mass = mass_vir * (1 + self.halo_scale / self.halo_radius_vir)**2
+                else:
+                    # find halo scale and mass such that the inner density profile matches the profile of
+                    # an NFW halo of equal virial mass and eq. (3) in Hernquist, ApJ 356 (1990), is satisfied
+                    b = 0.5*c**3 / self.halo_norm_fct
+                    sol = root(lambda x: 1 + 2*x + x**2 - b*x**3, 1/c)
+                    self.halo_scale = sol.x[0] * self.halo_radius_vir
+                    self.halo_mass = mass_vir * (1 + sol.x[0])**2
+            
+        else:
+            # halo scale equals core radius
+            self.halo_scale = r_core*kpc
+            self.halo_radius_vir = c * self.halo_scale
+            self.halo_mass = mass*M_sun.value
+                        
         if nfw:
             self.halo_profile = "NFW"
-            self.halo_scale = kpc*r_core
             self.halo_central_pot = -G*self.halo_mass / (self.halo_norm_fct * self.halo_scale)
         else:
             self.halo_profile = "Hernquist"
-            # Springel et al., MNRAS 361 (2005), eq. (2)
-            self.halo_scale = kpc*r_core * (2*self.halo_norm_fct)**(1/2)
             self.halo_central_pot = -G*self.halo_mass / self.halo_scale
-            
+    
             
     # halo density profile
     def halo_dens(self, r, z):
