@@ -1,4 +1,6 @@
-import numpy as np
+from halo import np, Halo
+
+#import numpy as np
 import scipy.special as spec
 
 from astropy.constants import M_sun
@@ -6,15 +8,15 @@ from scipy.constants import G, k, m_p, parsec
 from scipy.integrate import quad, solve_ivp
 from scipy.optimize import root
 
-# select cosmology
-from astropy.cosmology import Planck18 as cosmo
-
 kpc = 1e3*parsec
 
-class GasDisk:
+
+class GasDisk(Halo):
 
     def __init__(self, mass, r_s, z_s, temp=1e4, mu=1, gamma=5/3, disk='double exponential'):
 
+        super().__init__()
+        
         try:
             if mass > 0 and r_s > 0 and z_s > 0: 
                 self.scale_length = kpc*r_s
@@ -32,86 +34,14 @@ class GasDisk:
         self.disk = disk
         self.sound_speed_sqr = k*temp/(mu*m_p)
         
-        # halo properties are defined by set_halo() method
-        self.halo_profile = None
-        self.halo_mass = None
-        self.halo_scale = None
-        self.halo_radius_vir = None
-        self.halo_norm_fct = None
-        self.halo_central_pot = None
-
         # mesh is filled by compute() method
         self._mesh_r = None
         self._mesh_z = None        
         self._mesh_rho = None
         self._mesh_v_rot = None
-
-
-    # set halo parameters
-    def set_halo(self, mass, r_core=None, c=10, nfw=True, springel=False):
-
-        self.halo_norm_fct = np.log(1 + c) - c/(1 + c)
-        
-        if r_core == None:
-            # virial radius is the radius at which the mean enclosed dark matter density
-            # is 200 times the critical density
-            mass_vir = mass*M_sun.value
-            self.halo_radius_vir = (3*mass_vir / (800*np.pi * cosmo.critical_density(0).si.value))**(1/3)
-            
-            # determine halo scale from virial mass
-            if nfw:
-                self.halo_scale = self.halo_radius_vir / c
-                self.halo_mass = mass_vir
-            else:
-                if springel:
-                    # Springel et al., MNRAS 361 (2005), eq. (2)
-                    self.halo_scale = (self.halo_radius_vir / c) * (2*self.halo_norm_fct)**(1/2)
-                    self.halo_mass = mass_vir * (1 + self.halo_scale / self.halo_radius_vir)**2
-                else:
-                    # find halo scale and mass such that the inner density profile matches the profile of
-                    # an NFW halo of equal virial mass and eq. (3) in Hernquist, ApJ 356 (1990), is satisfied
-                    b = 0.5*c**3 / self.halo_norm_fct
-                    sol = root(lambda x: 1 + 2*x + x**2 - b*x**3, 1/c)
-                    self.halo_scale = sol.x[0] * self.halo_radius_vir
-                    self.halo_mass = mass_vir * (1 + sol.x[0])**2
-            
-        else:
-            # halo scale equals core radius
-            self.halo_scale = r_core*kpc
-            self.halo_radius_vir = c * self.halo_scale
-            self.halo_mass = mass*M_sun.value
-                        
-        if nfw:
-            self.halo_profile = "NFW"
-            self.halo_central_pot = -G*self.halo_mass / (self.halo_norm_fct * self.halo_scale)
-        else:
-            self.halo_profile = "Hernquist"
-            self.halo_central_pot = -G*self.halo_mass / self.halo_scale
     
-            
-    # halo density profile
-    def halo_dens(self, r, z):
-                
-        # three-dimensional radius
-        r3 = (r*r + z*z)**(1/2)
-            
-        if self.halo_profile == "NFW":
-            rho_0 = self.halo_mass / (4*np.pi * self.halo_scale**3 * self.halo_norm_fct)
-            #print(f"Density coefficient (NFW) = {rho_0:.3e} kg/m**3")
-            return rho_0 / (r3 * (1 + r3)**2)
-        
-        elif self.halo_profile == "Hernquist":
-            # Hernquist, ApJ 356 (1990), eq. (2)
-            rho_0 = self.halo_mass / (2*np.pi * self.halo_scale**3)
-            #print(f"Density coefficient (Hernquist) = {rho_0:.3e} kg/m**3")
-            return rho_0 / (r3 * (r3 + 1)**3)
-        
-        else:
-            print("Error: unknown halo profile")
-            return None
-        
     
-    # halo potential
+    # halo potential as function of disk coordinates
     def halo_pot(self, r, z):
             
         # three-dimensional radius
@@ -128,7 +58,7 @@ class GasDisk:
         else:
             print("Error: unknown halo profile")
             return None
-
+    
     
     # computes first and second derivates of the vertical potential difference of gas in NFW halo
     # Wang et al., MNRAS 407, eq. (19)
