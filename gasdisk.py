@@ -42,7 +42,7 @@ class GasDisk(Halo):
     
     
     # halo potential as function of disk coordinates
-    def halo_pot(self, r, z):
+    def halo_pot_cyl(self, r, z):
             
         # three-dimensional radius
         r3 = (r*r + z*z)**(1/2)
@@ -183,8 +183,8 @@ class GasDisk(Halo):
                         
                     # Wang et al., MNRAS 407 (2010), eq. (25)
                     integr = quad(lambda zeta: np.exp(-(tmp.sol(self.scale_height*zeta)[0] + 
-                                                        self.halo_pot(r[i]*rescale_r, zeta*rescale_z) - 
-                                                        self.halo_pot(r[i]*rescale_r, 0)) / 
+                                                        self.halo_pot_cyl(r[i]*rescale_r, zeta*rescale_z) - 
+                                                        self.halo_pot_cyl(r[i]*rescale_r, 0)) / 
                                                       self.sound_speed_sqr),
                                   0, z[-1])
                     
@@ -214,8 +214,8 @@ class GasDisk(Halo):
                 
                 # Wang et al., MNRAS 407 (2010), eq. (18)
                 self._mesh_rho[:,i] = midplane_rho[i] * \
-                    np.exp(-(gas_pot[:,i] + self.halo_pot(r[i]*rescale_r, z*rescale_z) - 
-                                            self.halo_pot(r[i]*rescale_r, 0)) / 
+                    np.exp(-(gas_pot[:,i] + self.halo_pot_cyl(r[i]*rescale_r, z*rescale_z) - 
+                                            self.halo_pot_cyl(r[i]*rescale_r, 0)) / 
                            self.sound_speed_sqr)
                 
             # rotation curve: contribution of gas disc
