@@ -13,7 +13,7 @@ kpc = 1e3*parsec
 
 class GasDisk(Halo):
 
-    def __init__(self, mass, r_s, z_s, temp=1e4, mu=1, gamma=5/3, disk='double exponential'):
+    def __init__(self, mass, r_s, z_s, temp=1e4, mu=1, disk='double exponential'):
 
         super().__init__()
         
@@ -32,6 +32,8 @@ class GasDisk(Halo):
             print("Invalid argument: disk density and scales must be positive")
 
         self.disk = disk
+
+        # isothermal sound speed squared = (gamma - 1)*e
         self.sound_speed_sqr = k*temp/(mu*m_p)
         
         # mesh is filled by compute() method
@@ -92,10 +94,10 @@ class GasDisk(Halo):
     
     # compute gas density and rotation curve
     def compute(self, r_max, z_max, dr=0.1, dz=0.1, n_r=None, n_z=None, 
-                err_min=1e-3, r_min=1e-6, k_max=10, verb=False):
+                r_min=1e-6, err_min=1e-3, k_max=10, verb=False, legacy=False):
         
         if n_r == None:
-            r = np.arange(0, kpc*r_max/self.scale_length, dr)
+            r = np.arange(0, kpc*r_max/self.scale_length + dr, dr)
         else:
             try:
                 if int(n_r) >= 0:
@@ -107,7 +109,7 @@ class GasDisk(Halo):
                 return         
             
         if n_z == None:
-            z = np.arange(0, kpc*z_max/self.scale_height, dz)
+            z = np.arange(0, kpc*z_max/self.scale_height + dz, dz)
         else:
             try:
                 if int(n_z) >= 0:
@@ -151,7 +153,11 @@ class GasDisk(Halo):
             # auxiliary arrays
             h = np.zeros(sigma.shape)
             gas_pot = np.zeros(self._mesh_r.shape)
-                    
+                   
+            # --- comparison with legacy model ---
+            if legacy:
+                i_test = 3
+
             k = 1
             err = 1
             while err > err_min:
@@ -176,7 +182,15 @@ class GasDisk(Halo):
                         return
 
                     # potential difference of gas is first component of solution
-                    gas_pot[:, i] = tmp.sol(self.scale_height*z)[0]
+                    gas_pot[:,i] = tmp.sol(self.scale_height*z)[0]
+
+                    # --- comparison with legacy model ---
+                    if legacy and i == i_test:
+                        print(f"r = {r[i]:.2f}, rho_0 = {1e-3*midplane_rho[i]:.3e} (cgs)")
+                        for j in range(z.size):
+                            dm_pot = self.halo_pot_cyl(r[i]*rescale_r, z[j]*rescale_z) - self.halo_pot_cyl(r[i]*rescale_r, 0)
+                            rho_tmp = midplane_rho[i] * np.exp(-(gas_pot[j,i] + dm_pot) / self.sound_speed_sqr)
+                            print(f"   z = {z[j]:.2f}, rho = {rho_tmp:3e}, phi_g = {1e4*gas_pot[j,i]:.3e}, phi_dm = {1e4*dm_pot:.3e} (cgs)")
                             
                     if verb:
                         print(f"   integrating potential from z = 0 to {z[-1]:.2f}")
@@ -190,6 +204,10 @@ class GasDisk(Halo):
                     
                     # integral (first element returned by quad) defines r-dependent scale height
                     h[i] = self.scale_height*integr[0]
+
+                    # --- comparison with legacy model ---
+                    if legacy and i == i_test:
+                        print(f"   rho_0 = {1e-3*0.5*sigma[i]/h[i]:.3e}, phi_int = {1e2*2*h[i]:.3e} (cgs)")
                     
                 # Wang et al., MNRAS 407 (2010), eq. (25) 
                 midplane_rho_new = 0.5*sigma/h
@@ -207,7 +225,7 @@ class GasDisk(Halo):
                 
             self._mesh_rho = np.zeros(self._mesh_r.shape)
                         
-            print(f"Accuracy reached after {k:d} iterations:")
+            print(f"\nAccuracy reached after {k:d} iterations:")
             print("      r       h")
             for i in range(r.size):
                 print(f"   {r[i]:6.2f}  {h[i]/self.scale_height:8.4f}")
@@ -223,7 +241,7 @@ class GasDisk(Halo):
             y = 0.5*r
             v_gas_sqr = poisson_coeff * sigma_0 * self.scale_length * y**2 * \
                         (spec.iv(0, y) * spec.kn(0, y) - spec.iv(1, y) * spec.kn(1, y))
-            
+
             # rotation curve: contribution of pressure gradient
             # Wang et al., MNRAS 407 (2010), eq. (30)
             # compute density gradient r d(log rho)/dr using finite differences
@@ -234,7 +252,7 @@ class GasDisk(Halo):
             v_press_sqr[1:-1] = fct*(log_rho[2:] - log_rho[:-2])
             v_press_sqr[-1] = r[-1]*(log_rho[-1] - log_rho[-2])/(r[-1] - r[-2])
             v_press_sqr *= self.sound_speed_sqr
-            
+
             # rotation curve: contribution of dark matter halo
             v_halo_sqr = np.zeros(self._mesh_r.shape)
             
@@ -251,16 +269,16 @@ class GasDisk(Halo):
             # total rotation curve
             self._mesh_v_rot = np.zeros(self._mesh_r.shape)
 
+            if verb:
+                print("\nRotation curve:")
+                print("r/r_s   v_g_sqr     v_p_sqr    v_dm_sqr    vphi")
+
             for i in range(r.size):
-                try:
-                    v_rot_sqr = v_gas_sqr[i] + v_press_sqr[i] + v_halo_sqr[:,i]
-                    if v_rot_sqr.min() > 0:
-                        self._mesh_v_rot[:,i] = v_rot_sqr[:]**(1/2)
-                    else:
-                        raise ValueError
-                except ValueError:
-                    print("\nValueError: negative squared velocity - adjust parameters!")
-                    break
+                v_rot_sqr = np.maximum(v_gas_sqr[i] + v_press_sqr[i] + v_halo_sqr[:,i], 0)
+                self._mesh_v_rot[:,i] = v_rot_sqr[:]**(1/2)
+
+                if verb:
+                    print(f"{r[i]:5.2f}  {1e4*v_gas_sqr[i]:.3e}  {1e4*v_press_sqr[i]:.3e}  {1e4*v_halo_sqr[0,i]:.3e}  {1e2*v_rot_sqr[0]**(1/2):.3e}")
                     
             print(f"\nMaximum rotation velocity = {1e-3*np.max(self._mesh_v_rot[0,:]):.1f} km/s")
             
@@ -286,14 +304,14 @@ class GasDisk(Halo):
             
         else:
             
-            # output in SI units
+            # output in parsec/SI units
             if self.disk == 'double exponential':
-                data = np.array((self._mesh_r.flatten() * self.scale_length/kpc, 
-                                 self._mesh_z.flatten() * self.scale_height/kpc, 
+                data = np.array((self._mesh_r.flatten() * self.scale_length/parsec, 
+                                 self._mesh_z.flatten() * self.scale_height/parsec, 
                                  self._mesh_rho.flatten()))
             else:
-                data = np.array((self._mesh_r.flatten() * self.scale_length/kpc, 
-                                 self._mesh_z.flatten() * self.scale_height/kpc, 
+                data = np.array((self._mesh_r.flatten() * self.scale_length/parsec, 
+                                 self._mesh_z.flatten() * self.scale_height/parsec, 
                                  self._mesh_rho.flatten(),
                                  self._mesh_v_rot.flatten()))
             

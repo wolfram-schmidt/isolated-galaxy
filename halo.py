@@ -117,6 +117,22 @@ class Halo:
         else:
             print("Error: unknown halo profile")
             return None
+
+
+    # total gravitational energy of the halo
+    def halo_total_energy(self):
+            
+        if self.halo_profile == "NFW":
+            print("Error: not yet implemented")
+            return None
+        
+        elif self.halo_profile == "Hernquist":
+            # Hernquist, ApJ 356 (1990), eq. (14)
+            return self.halo_central_pot * self.halo_mass/6
+        else:
+            print("Error: unknown halo profile")
+            return None
+
         
     # integrand in Eddington's formula for NFW distribution function
     # ICICLE doc, eq. (17)
@@ -200,7 +216,7 @@ class Halo:
                 raise ValueError
         except ValueError:
             print("ValueError: number of particles and cutoff radius must be positive")           
-            return None, None, None;
+            return None, None, None
 
         # invert to radial distances relative to halo scale for
         # uniformly distributed sample of masses
@@ -225,7 +241,7 @@ class Halo:
             
         else:
             print("Error: unknown halo profile")
-            return None, None, None;
+            return None, None, None
 
         self.particle_mass = self.halo_cumulative_mass(self.halo_radius_max / self.halo_scale) / n_part
         
@@ -254,11 +270,34 @@ class Halo:
             e_sample[i] = np.interp(CMF[-1]*np.random.random_sample(), CMF, energy[physical])
             v_sample[i] = (2*(psi - e_sample[i]))**(1/2)
             
-        # set random particle velocities in km/s
+        # set random particle velocities in m/s
         self.particles[3,:], self.particles[4,:], self.particles[5,:] = \
-            1e-3*v_sample * self.isotropic(n_part)
+            v_sample * self.isotropic(n_part)
         
-        return r_sample, p_sample, e_sample;
+        return r_sample, p_sample, e_sample
+
+
+    # total kinetic and potential energy of particles
+    def energy_particles(self):
+
+        energy_kin = 0.5*self.particle_mass * \
+                     np.sum(self.particles[3]**2 + self.particles[4]**2 + self.particles[5]**2)
+
+        n_part = self.particles[0].size
+        energy_pot = 0
+
+        for i in range(n_part):
+            # position of reference particle
+            x1, y1, z1 = self.particles[0,i], self.particles[1,i], self.particles[2,i]
+
+            # distances to particles
+            r = ((self.particles[0] - x1)**2 + (self.particles[1] - y1)**2 + (self.particles[2] - z1)**2)**(1/2)
+            r *= parsec
+
+            # increment energy
+            energy_pot += np.sum(-0.5*G*self.particle_mass**2/r[r > 0])
+
+        return energy_kin, energy_pot
 
 
     # print particle data to file
