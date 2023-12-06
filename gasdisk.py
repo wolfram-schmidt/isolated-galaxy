@@ -1,6 +1,13 @@
+"""
+Computation of initial conditions for an isothermal disk in hydrostatic equilibrium using the method of Wang et al., MNRAS 407 (2010).
+"""
+
+__author__ = "Wolfram Schmidt, Simon Selg"
+__copyright__ = "Copyright 2023, University of Hamburg, Hamburg Observatory"
+
+
 from halo import np, Halo
 
-#import numpy as np
 import scipy.special as spec
 
 from astropy.constants import M_sun
@@ -12,15 +19,55 @@ kpc = 1e3*parsec
 
 
 class GasDisk(Halo):
+    """
+    Represents a gas disk at the center of a dark matter halo.
+    
+    Uses cylindrical coordinate system. Internally all quantities in SI units.
 
-    def __init__(self, mass, r_s, z_s, temp=1e4, mu=1, disk='double exponential'):
+    Attributes
+    ----------
+    scale_length : float
+        radial disk scale
+    scale_height : float
+        scale height of the disk
+    central_density : float
+        central density of an exponential disk
+    disk : string
+        'equilibrium': equilibrium disk, see Wang et al., MNRAS 407 (2010)
+        'double exponential': AGORA disk, see Kim et al., ApJ 833 (2016)
+    sound_speed_sqr : float
+        isothermal sound speed squared (disk temperature)
+    
+    Methods
+    -------
+    halo_pot_cyl():
+        halo potential as function of (cylindrical) disk coordinates
+    compute():
+        computes density (all disks) and velocity (only 'equilibrium')
+    save():
+        saves tabulated disk data to file
+    """
 
+    def __init__(self, mass, r_s, z_s, temp=1e4, mu=1, beta=np.infty, disk='equilibrium'):
+        """
+        inherits halo attributes and sets disk attributes
+
+        args: mass - total mass of gaseous disk in solar masses 
+              r_s  - radial disk scale in kpc
+              z_s  - scale height of the disk in kpc
+              temp - gas temperatue
+              mu   - mean molecular weight
+              disk - disk type: 
+                     'equilibrium' or 'double exponential'
+        """
+        
         super().__init__()
         
         try:
             if mass > 0 and r_s > 0 and z_s > 0: 
                 self.scale_length = kpc*r_s
-                self.scale_height = kpc*z_s
+                self.scale_height = kpc*z_s                
+                # Kim et al., ApJ 833, p4 (also applies to exponential surface density)
                 self.central_density = mass*M_sun.value / \
                     (4*np.pi * self.scale_length**2 * self.scale_height)
             else:
@@ -33,8 +80,11 @@ class GasDisk(Halo):
 
         self.disk = disk
 
-        # isothermal sound speed squared = (gamma - 1)*e
+        # isothermal sound speed squared = p/rho = (gamma - 1)*e
         self.sound_speed_sqr = k*temp/(mu*m_p)
+
+        # correction due to magnetic pressure
+        self.sound_speed_sqr *= (1 + 1 / beta)
         
         # mesh is filled by compute() method
         self._mesh_r = None
@@ -43,8 +93,15 @@ class GasDisk(Halo):
         self._mesh_v_rot = None
     
     
-    # halo potential as function of disk coordinates
     def halo_pot_cyl(self, r, z):
+        """
+        halo potential as function of disk coordinates
+
+        args: r - disk coordinate r relative to halo scale
+              z - disk coordinate z relative to halo scale
+
+        returns: potential (SI units)
+        """
             
         # three-dimensional radius
         r3 = (r*r + z*z)**(1/2)
@@ -62,9 +119,21 @@ class GasDisk(Halo):
             return None
     
     
-    # computes first and second derivates of the vertical potential difference of gas in NFW halo
-    # Wang et al., MNRAS 407, eq. (19)
     def _gas_pot_nfw_derv(self, z_si, state, r, a):
+        """
+        auxiliary method for solve_ivp()
+        computes first and second derivatives of the vertical potential difference of gas in NFW halo
+        Wang et al., MNRAS 407, eq. (19)
+
+        args: z - disk coordinate z in SI units
+              state - state vector:
+                      state[0] = vertical potential difference of gas
+                      state[1] = vertical derivative of potential
+              r - disk coordinate r relative to halo scale
+              a - factor 4 pi G rho_0(r)
+              
+        returns: state derivative (SI units)
+        """
       
         # three-dimensional radius
         z = z_si/self.halo_scale
@@ -73,12 +142,24 @@ class GasDisk(Halo):
         halo_pot_diff = self.halo_central_pot * (np.log(1 + r3)/r3 - np.log(1 + r)/r)
             
         return np.array([state[1], 
-                        a * np.exp(-(state[0] + halo_pot_diff) / self.sound_speed_sqr)])
+                         a * np.exp(-(state[0] + halo_pot_diff) / self.sound_speed_sqr)])
     
  
-    # computes first and second derivates of the vertical potential difference of gas in Hernquist halo
-    # Wang et al., MNRAS 407, eq. (19)
     def _gas_pot_hernq_derv(self, z_si, state, r, a):
+        """
+        auxiliary method for solve_ivp()
+        computes first and second derivatives of the vertical potential difference of gas in Hernquist halo
+        Wang et al., MNRAS 407, eq. (19)
+
+        args: z - disk coordinate z in SI units
+              state - state vector:
+                      state[0] = vertical potential difference of gas
+                      state[1] = vertical derivative of potential
+              r - disk coordinate r relative to halo scale
+              a - factor 4 pi G rho_0(r)
+              
+        returns: state derivative (SI units)
+        """
       
         # three-dimensional radius
         z = z_si/self.halo_scale
@@ -92,9 +173,26 @@ class GasDisk(Halo):
                         a * np.exp(-(state[0] + halo_pot_diff) / self.sound_speed_sqr)])
 
     
-    # compute gas density and rotation curve
     def compute(self, r_max, z_max, dr=0.1, dz=0.1, n_r=None, n_z=None, 
                 r_min=1e-6, err_min=1e-3, k_max=10, verb=False, legacy=False):
+        """
+        computes density rho(r,z) and rotation velocity for the gas disk
+        in cylindrical region of radius r_max and height z_max
+        data are stored in mesh arrays
+
+        args: r_max - maximal radial coordinate relative to disk scale
+              z_max - maximal z-coordinate relative to disk scale height
+              dr    - radial step if n_r not specified
+              dz    - vertical step if n_z not specified
+              n_r   - number of steps in [0,r_max]
+              n_z   - number of steps in [0,z_max]
+              r_min - minimal radius to avoid divergent halo potential
+              err_min - relative tolerance for iterative algorithm
+              k_max   - terminate if tolerance not reached after k_max iterations
+              verb    - verbosity of iterative algorithm
+              legacy  - print sample of density and potential for comparison 
+                        with legacy model in Enzo
+        """
         
         if n_r == None:
             r = np.arange(0, kpc*r_max/self.scale_length + dr, dr)
@@ -127,7 +225,7 @@ class GasDisk(Halo):
             
             self._mesh_rho = self.central_density * np.exp(-self._mesh_r)*np.exp(-self._mesh_z)
             
-        # alogrithm described in Wang et al., MNRAS 407 (2010), section 2.2.3
+        # iterative alogrithm described in Wang et al., MNRAS 407 (2010), section 2.2.3
         elif self.disk == 'equilibrium':
             
             if self.halo_profile == None:
@@ -157,7 +255,7 @@ class GasDisk(Halo):
             # --- comparison with legacy model ---
             if legacy:
                 i_test = 3
-
+            
             k = 1
             err = 1
             while err > err_min:
@@ -193,7 +291,7 @@ class GasDisk(Halo):
                             print(f"   z = {z[j]:.2f}, rho = {rho_tmp:3e}, phi_g = {1e4*gas_pot[j,i]:.3e}, phi_dm = {1e4*dm_pot:.3e} (cgs)")
                             
                     if verb:
-                        print(f"   integrating potential from z = 0 to {z[-1]:.2f}")
+                        print(f"   integrating potential from z = 0 to {self.scale_height*z[-1]/kpc:.2f} kpc")
                         
                     # Wang et al., MNRAS 407 (2010), eq. (25)
                     integr = quad(lambda zeta: np.exp(-(tmp.sol(self.scale_height*zeta)[0] + 
@@ -208,7 +306,7 @@ class GasDisk(Halo):
                     # --- comparison with legacy model ---
                     if legacy and i == i_test:
                         print(f"   rho_0 = {1e-3*0.5*sigma[i]/h[i]:.3e}, phi_int = {1e2*2*h[i]:.3e} (cgs)")
-                    
+
                 # Wang et al., MNRAS 407 (2010), eq. (25) 
                 midplane_rho_new = 0.5*sigma/h
                 
@@ -226,9 +324,9 @@ class GasDisk(Halo):
             self._mesh_rho = np.zeros(self._mesh_r.shape)
                         
             print(f"\nAccuracy reached after {k:d} iterations:")
-            print("      r       h")
+            print("      r       h/kpc")
             for i in range(r.size):
-                print(f"   {r[i]:6.2f}  {h[i]/self.scale_height:8.4f}")
+                print(f"   {r[i]:6.2f}  {h[i]/kpc:8.4f}")
                 
                 # Wang et al., MNRAS 407 (2010), eq. (18)
                 self._mesh_rho[:,i] = midplane_rho[i] * \
@@ -257,8 +355,9 @@ class GasDisk(Halo):
             v_halo_sqr = np.zeros(self._mesh_r.shape)
             
             # need three-dimensional radius in units of halo scale
-            r3 = ((np.clip(self._mesh_r, r_min, r_max)*rescale_r)**2 + 
-                  (self._mesh_z*rescale_z)**2)**(1/2)
+            #r3 = ((np.clip(self._mesh_r, r_min, r_max)*rescale_r)**2 + 
+            #      (self._mesh_z*rescale_z)**2)**(1/2)
+            r3 = np.clip(self._mesh_r, r_min, r_max)*rescale_r
             if self.halo_profile == "NFW":
                 # Navarro et al., ApJ 462 (1996), eq. (5)
                 v_halo_sqr = -self.halo_central_pot * (np.log(1 + r3) - r3/(1 + r3)) / r3
@@ -286,12 +385,20 @@ class GasDisk(Halo):
             print("Error: unknown disk type")
     
     
-    # print data to file
     def save(self, file, scaled=True):
+        """
+        print tabulated data to file
+        density and velocity in SI units
+
+        args: file   - filename
+              scaled - True: scale r, z to disk scales, rho relative to central density
+                       False: r, z in parsec, rho in SI units
+                       in both cases velocity in SI units
+        """
                 
         if scaled:
             
-            # output relative to length scales and central density
+            # output relative to disk scales and central density
             if self.disk == 'double exponential':
                 data = np.array((self._mesh_r.flatten(), 
                                  self._mesh_z.flatten(), 
