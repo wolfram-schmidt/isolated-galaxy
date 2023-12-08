@@ -1,3 +1,12 @@
+"""
+Computation of initial conditions for N-body halos following Drakos et al., MNRAS 468 (2017).
+Also see https://github.com/ndrakos/ICICLE.
+"""
+
+__author__ = "Wolfram Schmidt, Simon Selg"
+__copyright__ = "Copyright 2023, University of Hamburg, Hamburg Observatory"
+
+
 import numpy as np
 
 from astropy.constants import M_sun
@@ -12,6 +21,53 @@ kpc = 1e3*parsec
 
 
 class Halo:
+    """
+    Represents a dark matter halo.
+    
+    Attributes
+    ----------
+    halo_profile : string
+        'NFW' : NFW profile
+        'Hernquist' : Hernquist profile
+    halo_mass : float
+        virial (NFW) or asymptotic (Hernquist) mass of halo
+    halo_scale : float
+        halo scale length (core radius)
+    halo_radius_vir : float
+        virial radius of halo
+    halo_radius_max : float
+        cutoff radius for N-body realization
+    halo_norm_fct : float
+        factor in formula for NFW halo mass
+    halo_central_pot : float
+        factor in formula for halo potential
+        
+    particles : two-dimensional numpy array
+        particle coordinates and velocity components (Cartesian)
+    particle_mass : float
+        mass of a single particle
+    
+    Methods (excluding auxiliaries)
+    -------
+    set_halo() :
+        sets halo type and parameters
+    halo_dens() :
+        halo density profile (analytic)
+    halo_cumulative_mass() :
+        cumulative halo mass (analytic)
+    halo_pot() :    
+        gravitational potential of halo (analytic)
+    halo_total_energy() :
+        total gravitational energy of halo (analytic)
+    generate_particles() :
+        computes random particle positions and velocities
+        of a halo in virial equilibrium from the 
+        density profile and the distribution function
+    energy_particles() :
+        total kinetic and potential energy of the particles   
+    save_particles() :
+        saves tabulated particle data to file
+    """
 
     def __init__(self):
 
@@ -26,8 +82,23 @@ class Halo:
         self.particles = None
         self.particle_mass = 0
 
-    # set halo parameters
-    def set_halo(self, mass, r_core=None, c=10, nfw=True, springel=False):
+    def set_halo(self, mass, r_core=None, c=10, nfw=True, springel_norm=False):
+        """
+        set halo parameters
+
+        args: mass   - halo mass
+                       virial mass if r_core not specified, parametric mass otherwise
+              r_core - halo core radius
+                       determined from virial radius and concentration parameter if not specified
+              nfw - True: NFW profile
+                    False: Hernquist profile
+              springel_norm - only applies to Hernquist halos
+                              True: normalization proposed by Springel et al. (2005)
+                              False: core density is asymptotically matched
+        
+
+        returns: potential (SI units)
+        """
 
         self.halo_norm_fct = np.log(1 + c) - c/(1 + c)
         
@@ -42,13 +113,14 @@ class Halo:
                 self.halo_scale = self.halo_radius_vir / c
                 self.halo_mass = mass_vir
             else:
-                if springel:
+                if springel_norm:
                     # Springel et al., MNRAS 361 (2005), eq. (2)
                     self.halo_scale = (self.halo_radius_vir / c) * (2*self.halo_norm_fct)**(1/2)
                     self.halo_mass = mass_vir * (1 + self.halo_scale / self.halo_radius_vir)**2
                 else:
-                    # find halo scale and mass such that the inner density profile matches the profile of
-                    # an NFW halo of equal virial mass and eq. (3) in Hernquist, ApJ 356 (1990), is satisfied
+                    # find halo scale and mass such that the inner density profile 
+                    # asymptotically matches the profile of an NFW halo of equal virial mass 
+                    # and eq. (3) in Hernquist, ApJ 356 (1990), is satisfied
                     b = 0.5*c**3 / self.halo_norm_fct
                     sol = root(lambda x: 1 + 2*x + x**2 - b*x**3, 1/c)
                     self.halo_scale = sol.x[0] * self.halo_radius_vir
@@ -68,8 +140,14 @@ class Halo:
             self.halo_central_pot = -G*self.halo_mass / self.halo_scale
     
             
-    # halo density profile
     def halo_dens(self, r):
+        """
+        radial profile of mass density
+
+        args: r - radial distance from center (array-like)
+
+        returns: mass density (SI units)
+        """
                 
         if self.halo_profile == "NFW":
             rho_0 = self.halo_mass / (4*np.pi * self.halo_scale**3 * self.halo_norm_fct)
@@ -86,9 +164,15 @@ class Halo:
             print("Error: unknown halo profile")
             return None
     
-    
-    # cumulative halo mass
+
     def halo_cumulative_mass(self, r):
+        """
+        cumulative halo mass at radius r
+
+        args: r - radial distance from center (array-like)
+
+        returns: mass (SI units)
+        """
         
         if self.halo_profile == "NFW":
             # ICICLE doc, eq. (11) 
@@ -103,8 +187,14 @@ class Halo:
             return None
     
     
-    # halo potential
     def halo_pot(self, r):
+        """
+        halo potential as function of radius
+
+        args: r - radial distance from center (array-like)
+
+        returns: potential (SI units)
+        """
             
         if self.halo_profile == "NFW":
             # ICICLE doc, eq. (13) 
@@ -119,8 +209,13 @@ class Halo:
             return None
 
 
-    # total gravitational energy of the halo
     def halo_total_energy(self):
+        """
+        computes total gravitational energy of the halo
+        currently implemented only for Hernquist profile
+        
+        returns: gravitational energy (SI units)
+        """
             
         if self.halo_profile == "NFW":
             print("Error: not yet implemented")
@@ -134,9 +229,17 @@ class Halo:
             return None
 
         
-    # integrand in Eddington's formula for NFW distribution function
-    # ICICLE doc, eq. (17)
     def nfw_eddington(self, r, q_sqr):
+        """
+        auxiliary method for halo_distribution()
+        computes integrand in Eddington's formula for NFW distribution function
+        see ICICLE doc, eq. (17)
+
+        args: r     - radial coordinate
+              q_sqr - energy normalized by potential at center
+              
+        returns: value of integrand (SI units)
+        """
     
         rho = 1/(r*(1 + r)**2)
         mass = (np.log(1 + r) - r/(1 + r))
@@ -147,6 +250,14 @@ class Halo:
         
     # distribution function
     def halo_distribution(self, energy):
+        """
+        auxiliary method for generate_particles()
+        computes distribution function for mass per phase space volume
+
+        args: energy - specific energy of dark matter
+               
+        returns: value of distribution function (SI units)
+        """
         
         if not isinstance(energy, np.ndarray):
             print("Error: parameters of halo_distribution must be arrays")
@@ -167,10 +278,8 @@ class Halo:
                         # find radius where energy equals potential energy
                         x1 = newton(lambda x: np.log(1 + x) - q_sqr[i]*x, 1.01 * x0,
                                     lambda x: 1/(1 + x) - q_sqr[i]) 
-                        #print(i, q_sqr[i], x0, x1, np.log(1 + x1) - q_sqr[i]*x1)
                         
                         integr = quad(self.nfw_eddington, x1, np.inf, args=(q_sqr[i]))
-                        #print(i, q_sqr[i], x1, integr[0])
                         f[i] = integr[0]
            
             return f / (2**(1/2) * 4*np.pi*G * self.halo_scale**2 * v_g)
@@ -189,6 +298,13 @@ class Halo:
     
     # auxiliary method to generate uniformely distributed points on unit sphere
     def isotropic(self, n):
+        """
+        auxiliary method to generate uniformely distributed points on unit sphere
+
+        args: n - number of points
+              
+        returns: x, y, z coordinate arrays (SI units)
+        """
 
         z = np.random.uniform(-1, 1, int(n))         
         phi = np.random.uniform(0, 2*np.pi, int(n))
@@ -198,9 +314,22 @@ class Halo:
 
         return x, y, z;
 
-    
-    # generate initial conditions for particles
+
     def generate_particles(self, n_part, r_max=None):
+        """
+        generates initial conditions for a given number of particles
+        by populating the phase space randomly 
+        
+        particle data are stored in self.particles
+        (positions in pc, velocites in m/s)
+
+        args: n_part - number of particles
+              r_max - maximal radial extent of halo in kpc 
+                      (virial radius if not specified)
+                      
+        returns: radial coordinates, potential, and energy
+                 of particles
+        """
 
         n_part = int(n_part)
 
@@ -224,14 +353,12 @@ class Halo:
             # mass within r_max
             m_max = self.halo_cumulative_mass(self.halo_radius_max / self.halo_scale) * \
                     self.halo_norm_fct / self.halo_mass
-            #print(m_max)
             
             r_sample = np.ones(n_part)
             for i in range(n_part):
                 m = np.random.uniform(0, m_max) 
                 sol = root(lambda x: np.log(1 + x) - x/(1 + x) - m, r_sample[i])
                 r_sample[i] = sol.x[0]
-                #print(i, m, r_sample[i])
                 
         elif self.halo_profile == "Hernquist":
             m_sample = np.random.random_sample(n_part) # normalized to mass within r_max
@@ -277,8 +404,14 @@ class Halo:
         return r_sample, p_sample, e_sample
 
 
-    # total kinetic and potential energy of particles
     def energy_particles(self):
+        """
+        computes the total kinetic and potential energy of all particles
+        
+        since direct summation is applied, do not use this method for large particle numbers
+        
+        returns: kinetic and potential energy (SI units)
+        """
 
         energy_kin = 0.5*self.particle_mass * \
                      np.sum(self.particles[3]**2 + self.particles[4]**2 + self.particles[5]**2)
@@ -300,8 +433,14 @@ class Halo:
         return energy_kin, energy_pot
 
 
-    # print particle data to file
     def save_particles(self, file):
+        """
+        saves particle data to file
+        (positions in pc, velocites in m/s)
+        also creates a header file containing parameters
+
+        args: file   - filename (prefix)
+        """
 
         data_file = file + ".dat"
 

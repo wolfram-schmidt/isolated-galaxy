@@ -38,13 +38,13 @@ class GasDisk(Halo):
     sound_speed_sqr : float
         isothermal sound speed squared (disk temperature)
     
-    Methods
+    Methods (excluding auxiliaries)
     -------
-    halo_pot_cyl():
+    halo_pot_cyl() :
         halo potential as function of (cylindrical) disk coordinates
-    compute():
+    compute() :
         computes density (all disks) and velocity (only 'equilibrium')
-    save():
+    save() :
         saves tabulated disk data to file
     """
 
@@ -387,7 +387,7 @@ class GasDisk(Halo):
     
     def save(self, file, scaled=True):
         """
-        print tabulated data to file
+        saves tabulated data to file
         density and velocity in SI units
 
         args: file   - filename
