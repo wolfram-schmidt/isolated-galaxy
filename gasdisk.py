@@ -174,7 +174,7 @@ class GasDisk(Halo):
 
     
     def compute(self, r_max, z_max, dr=0.1, dz=0.1, n_r=None, n_z=None, 
-                r_min=1e-6, err_min=1e-3, k_max=10, verb=False, legacy=False):
+                r_min=1e-6, err_min=1e-3, k_max=10, verb=False):
         """
         computes density rho(r,z) and rotation velocity for the gas disk
         in cylindrical region of radius r_max and height z_max
@@ -190,8 +190,6 @@ class GasDisk(Halo):
               err_min - relative tolerance for iterative algorithm
               k_max   - terminate if tolerance not reached after k_max iterations
               verb    - verbosity of iterative algorithm
-              legacy  - print sample of density and potential for comparison 
-                        with legacy model in Enzo
         """
         
         if n_r == None:
@@ -251,11 +249,7 @@ class GasDisk(Halo):
             # auxiliary arrays
             h = np.zeros(sigma.shape)
             gas_pot = np.zeros(self._mesh_r.shape)
-                   
-            # --- comparison with legacy model ---
-            if legacy:
-                i_test = 3
-            
+                        
             k = 1
             err = 1
             while err > err_min:
@@ -281,14 +275,6 @@ class GasDisk(Halo):
 
                     # potential difference of gas is first component of solution
                     gas_pot[:,i] = tmp.sol(self.scale_height*z)[0]
-
-                    # --- comparison with legacy model ---
-                    if legacy and i == i_test:
-                        print(f"r = {r[i]:.2f}, rho_0 = {1e-3*midplane_rho[i]:.3e} (cgs)")
-                        for j in range(z.size):
-                            dm_pot = self.halo_pot_cyl(r[i]*rescale_r, z[j]*rescale_z) - self.halo_pot_cyl(r[i]*rescale_r, 0)
-                            rho_tmp = midplane_rho[i] * np.exp(-(gas_pot[j,i] + dm_pot) / self.sound_speed_sqr)
-                            print(f"   z = {z[j]:.2f}, rho = {rho_tmp:3e}, phi_g = {1e4*gas_pot[j,i]:.3e}, phi_dm = {1e4*dm_pot:.3e} (cgs)")
                             
                     if verb:
                         print(f"   integrating potential from z = 0 to {self.scale_height*z[-1]/kpc:.2f} kpc")
@@ -302,10 +288,6 @@ class GasDisk(Halo):
                     
                     # integral (first element returned by quad) defines r-dependent scale height
                     h[i] = self.scale_height*integr[0]
-
-                    # --- comparison with legacy model ---
-                    if legacy and i == i_test:
-                        print(f"   rho_0 = {1e-3*0.5*sigma[i]/h[i]:.3e}, phi_int = {1e2*2*h[i]:.3e} (cgs)")
 
                 # Wang et al., MNRAS 407 (2010), eq. (25) 
                 midplane_rho_new = 0.5*sigma/h
@@ -422,4 +404,4 @@ class GasDisk(Halo):
                                  self._mesh_rho.flatten(),
                                  self._mesh_v_rot.flatten()))
             
-        np.savetxt(file, data.transpose(), fmt='%.10e')
+        np.savetxt(file + ".dat", data.transpose(), fmt='%.10e')

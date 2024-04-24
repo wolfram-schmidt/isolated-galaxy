@@ -6,7 +6,7 @@ Python module to create initial conditions for an isolated disk galaxy simulatio
 
 ## Installation
 
-Copy ```halo.py``` (base class) and ```gasdisk.py``` (subclass) to your work directory and import the module:
+Copy `halo.py` (base class) and `gasdisk.py` (subclass) to your work directory and import the module:
 
 ```
 import gasdisk
@@ -15,3 +15,7 @@ import gasdisk
 ## Documentation
 
 Provided by docstrings.
+
+## Example
+
+Open notebook `Example.ipynb`.

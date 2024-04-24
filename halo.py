@@ -90,6 +90,7 @@ class Halo:
                        virial mass if r_core not specified, parametric mass otherwise
               r_core - halo core radius
                        determined from virial radius and concentration parameter if not specified
+              c      - halo concentration parameter
               nfw - True: NFW profile
                     False: Hernquist profile
               springel_norm - only applies to Hernquist halos
